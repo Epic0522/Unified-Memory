@@ -1,0 +1,14 @@
+# macOS
+.DS_Store
+
+# Node / local environment
+node_modules/
+.env
+.env.*
+
+# Local data overrides
+data/*.local.json
+
+# Runtime output
+*.log
+tmp/

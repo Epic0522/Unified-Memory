@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "memoryShape": {
+    "strategy": "flask",
+    "description": "base keeps near-handoff details, body keeps compact summaries, neck keeps distant outlines."
+  },
+  "updatedAt": null,
+  "handoff": {
+    "latest": null,
+    "history": []
+  },
+  "ideas": [],
+  "projectNotes": [],
+  "userPreferences": [],
+  "openLoops": [],
+  "dailyTimeline": [],
+  "currentState": {
+    "timeContext": null,
+    "sleepState": null,
+    "recentMeal": null,
+    "bodyState": null,
+    "mood": null,
+    "updatedAt": null
+  }
+}

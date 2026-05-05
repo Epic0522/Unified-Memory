@@ -1,0 +1,8 @@
+{
+  "unifiedMemory": {
+    "autoWriteOnSkillRecall": false,
+    "autoWriteOnIMessageRecall": true,
+    "manualHandoffCommand": true
+  }
+}
+
