@@ -271,8 +271,3 @@ If they conflict, the newest live context wins. Long-term memory is background, 
 
 ---
 
-## Notice / 注意事项
-
-This is an optional update package and should not be required for the main hub to start. Published packages should keep data files empty and must not include real user memory.
-
-本包是可选升级包，不应让主程序依赖它才能启动。发布到公开仓库前请保持空数据文件，不要带真实用户记忆。
