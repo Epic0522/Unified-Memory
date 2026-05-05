@@ -90,6 +90,7 @@ function isGenericLatestDesktopRecall(text) {
   const hasDesktopAnchor = /(电脑上|电脑这边|桌面上|cli|codex|本机|这边)/i.test(normalized);
   const isRecallQuestion = /(什么|哪|怎么|咋|吗|没|没有|记得|想起来|同步|结果|更新|进度|做到|做完|弄好|搞好|处理|修好|改好|看见|看到)/i.test(normalized);
   if (hasRecentAnchor && hasDesktopAnchor && isRecallQuestion) return true;
+  if (hasRecentAnchor && /(做了什么|做过什么|干了什么|弄了什么|搞了什么|改了什么|更新了什么|处理了什么|修了什么|做到哪|做完没|弄好没|搞好没)/i.test(normalized)) return true;
   if (hasRecentAnchor && /(问的|问过|说的|说过|发的|发过|做的|做过|弄的|弄过|改的|改过|更新的|更新过|聊的|聊过|处理的|处理过)/i.test(normalized)) return true;
   return false;
 }
@@ -158,6 +159,7 @@ function isNoisyLocalLogText(text) {
     || /(做了什么、改了什么、更新了什么|傻傻只抓|只抓一个关键词|错误交接|带偏的错误交接)/.test(text)
     || /searchRecentCodexContext/.test(text)
     || /"file":\s*"[^"]*\/\.codex\/sessions/.test(text)
+    || /命令成功：.*unified_memory_tool\.mjs\s+recall[\s\S]*"promptContext":/i.test(text)
     || /命令成功：.*\b(sed|rg|cat|tail|nl)\b/i.test(text)
     || /命令成功：.*searchRecentCodexContext[\s\S]*Output:\s*\[/i.test(text)
     || /(export async function|function extractMessage|import \{ readdir, readFile, stat \})/.test(text)

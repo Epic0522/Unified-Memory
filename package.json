@@ -5,15 +5,14 @@
   "private": true,
   "description": "Local unified memory layer for mobile-to-desktop agent handoff.",
   "bin": {
-    "unified-memory": "./scripts/unified-memory-tool.mjs"
+    "unified-memory": "./skill/scripts/unified-memory-tool.mjs"
   },
   "scripts": {
-    "check": "node --check src/unified-memory/index.js && node --check src/unified-memory/imessage-context.js && node --check src/unified-memory/recent-context.js && node --check scripts/unified-memory-tool.mjs",
-    "status": "node scripts/unified-memory-tool.mjs status",
-    "init": "node scripts/unified-memory-tool.mjs init"
+    "check": "node --check src/unified-memory/index.js && node --check src/unified-memory/imessage-context.js && node --check src/unified-memory/recent-context.js && node --check skill/scripts/unified-memory-tool.mjs",
+    "status": "node skill/scripts/unified-memory-tool.mjs status",
+    "init": "node skill/scripts/unified-memory-tool.mjs init"
   },
   "engines": {
     "node": ">=20"
   }
 }
-
