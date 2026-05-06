@@ -30,6 +30,9 @@ export async function searchRecentCodexContext(options = {}) {
           file: file.path,
           timestamp: message.timestamp,
           role: message.role,
+          phase: message.phase,
+          completed: message.completed,
+          importance: message.importance,
           text: message.text,
           score: adjustedSnippetScore(message.text, tokens, nearby === index)
         });
@@ -50,21 +53,57 @@ export async function searchLatestCodexTurns(options = {}) {
 
   for (const file of files) {
     const messages = await readSessionMessages(file.path);
-    const latest = messages
-      .filter((message) => isMeaningfulLatestMessage(message, currentQuery))
-      .slice(-(limit * 2));
+    const meaningful = messages.filter((message) => isMeaningfulLatestMessage(message, currentQuery));
+    const newestMs = newestTimestampMs(meaningful);
+    const concentrated = meaningful
+      .map((message) => ({
+        ...message,
+        concentration: eventConcentration(message, newestMs)
+      }))
+      .sort((a, b) => b.concentration - a.concentration || String(b.timestamp || "").localeCompare(String(a.timestamp || "")));
+    const highSignal = concentrated
+      .filter((message) => (message.importance ?? 1) > 0)
+      .slice(0, limit * 2);
+    const lowSignal = concentrated
+      .filter((message) => (message.importance ?? 1) <= 0)
+      .slice(0, Math.max(2, Math.floor(limit / 4)));
+    const latest = dedupeMessages([...highSignal, ...lowSignal])
+      .sort((a, b) => b.concentration - a.concentration || String(b.timestamp || "").localeCompare(String(a.timestamp || "")))
+      .slice(0, limit)
+      .sort((a, b) => String(a.timestamp || "").localeCompare(String(b.timestamp || "")));
     if (!latest.length) continue;
 
     return dedupeSnippets(latest.map((message, index) => ({
       file: file.path,
       timestamp: message.timestamp,
       role: message.role,
+      phase: message.phase,
+      completed: message.completed,
+      importance: message.importance,
       text: message.text,
-      score: 20 + index
+      score: message.concentration ?? (20 + index)
     }))).slice(-limit);
   }
 
   return [];
+}
+
+function newestTimestampMs(messages) {
+  return Math.max(0, ...messages.map((message) => Date.parse(message.timestamp || "")).filter(Number.isFinite));
+}
+
+function eventConcentration(message, newestMs) {
+  const timestampMs = Date.parse(message?.timestamp || "");
+  const ageMinutes = newestMs && Number.isFinite(timestampMs)
+    ? Math.max(0, (newestMs - timestampMs) / 60000)
+    : 999;
+  const importance = message.importance ?? 1;
+  const semanticValue = Math.max(0.2, 1 + (importance * 2.5))
+    + (message.completed ? 2.5 : 0)
+    + (message.role === "assistant" ? 1.2 : message.role === "tool" ? 0.8 : 0);
+  const timeDensity = 1 / (1 + (ageMinutes / 20));
+  const lowSignalDilution = importance <= 0 ? 0.35 : 1;
+  return semanticValue * timeDensity * lowSignalDilution;
 }
 
 export function formatRecentContextPrompt(snippets) {
@@ -97,7 +136,7 @@ function isGenericLatestDesktopRecall(text) {
 
 function hasConcreteTopicAnchor(text) {
   const normalized = String(text || "").replace(/\s+/g, "").toLowerCase();
-  return /(client|webui|bundle|resources?|app|launcher|adapter|bridge|proxy|message|host|启动器|通讯中枢|通讯client|客户端|资源|同步|统一记忆|桥接|代理|消息|宿主)/i.test(normalized);
+  return /(client|webui|bundle|resources?|app|启动器|通讯中枢|通讯client|客户端|资源|同步|统一记忆|codexremotecontact|shadowrocket|小火箭|imessage|qq|llbot)/i.test(normalized);
 }
 
 function findLatestMeaningfulUserMessage(messages, currentQuery) {
@@ -121,6 +160,7 @@ function isMeaningfulLatestMessage(message, currentQuery) {
   const text = String(message?.text || "").trim();
   if (!text || text.length < 4) return false;
   if (isNoisyLocalLogText(text)) return false;
+  if (message.role === "event") return true;
   if (message.role === "user") return isMeaningfulLatestUserText(text, currentQuery);
   if (message.role === "tool") return isMeaningfulToolText(text);
   if (message.role === "assistant") return !isLowSignalAssistantText(text);
@@ -139,6 +179,7 @@ function isMeaningfulLatestUserText(text, currentQuery) {
 function isMeaningfulToolText(text) {
   if (isNoisyLocalLogText(text)) return false;
   if (/^(Chunk ID|Wall time|Process exited)/.test(text) && !/(unified handoffs|removed imessage|kept handoffs|Chat Hub started)/i.test(text)) return false;
+  if (/^补丁应用(成功|失败)/.test(text)) return true;
   if (/(unified handoffs|removed imessage|kept handoffs|Chat Hub started|node --check|Process exited with code 0|清理|清掉|污染)/i.test(text)) return true;
   return text.length < 260 && !/^(Chunk ID|Wall time|Process exited)/.test(text);
 }
@@ -222,6 +263,7 @@ async function readSessionMessages(path) {
     if (extracted?.text) {
       messages.push({
         timestamp: item.timestamp,
+        eventType: item.type,
         ...extracted,
         text: normalizeText(extracted.text)
       });
@@ -232,14 +274,41 @@ async function readSessionMessages(path) {
 
 function extractMessage(item) {
   const payload = item?.payload || {};
+  if (item.type === "session_meta") {
+    return {
+      role: "event",
+      phase: "session_meta",
+      completed: false,
+      importance: 0,
+      text: `会话开始：cwd=${payload.cwd || ""} model=${payload.model || ""} source=${payload.source || ""}`
+    };
+  }
+  if (item.type === "turn_context") {
+    return {
+      role: "event",
+      phase: "turn_context",
+      completed: false,
+      importance: 0,
+      text: `回合上下文：cwd=${payload.cwd || ""} approval=${payload.approval_policy || ""} sandbox=${payload.sandbox_policy || ""}`
+    };
+  }
+  if (item.type === "event_msg" && payload.type === "token_count") {
+    return {
+      role: "event",
+      phase: "token_count",
+      completed: false,
+      importance: -1,
+      text: `token_count：total=${payload.info?.total_token_usage?.total_tokens ?? ""} last=${payload.info?.last_token_usage?.total_tokens ?? ""}`
+    };
+  }
   if (item.type === "event_msg" && payload.type === "user_message") {
     return { role: "user", text: payload.message };
   }
   if (item.type === "event_msg" && payload.type === "agent_message") {
-    return { role: "assistant", text: payload.message };
+    return { role: "assistant", phase: payload.phase, completed: payload.phase === "final_answer", text: payload.message };
   }
   if (item.type === "event_msg" && payload.type === "task_complete") {
-    return { role: "assistant", text: payload.last_agent_message };
+    return { role: "assistant", phase: "task_complete", completed: true, text: payload.last_agent_message };
   }
   if (item.type === "event_msg" && payload.type === "exec_command_end") {
     const command = Array.isArray(payload.command) ? payload.command.join(" ") : "";
@@ -247,16 +316,106 @@ function extractMessage(item) {
     const status = payload.exit_code === 0 ? "成功" : `退出码 ${payload.exit_code ?? "未知"}`;
     return { role: "tool", text: `命令${status}${command ? `：${command}` : ""}\n${output}` };
   }
+  if (item.type === "event_msg" && payload.type === "web_search_end") {
+    return {
+      role: "event",
+      phase: "web_search_end",
+      completed: true,
+      importance: 1,
+      text: `网页搜索完成：${payload.query || payload.action?.query || ""}`
+    };
+  }
+  if (item.type === "event_msg" && payload.type === "patch_apply_end") {
+    const changedFiles = Object.entries(payload.changes || {})
+      .map(([path, change]) => `${change?.type || "update"} ${path}`)
+      .join("\n");
+    const status = payload.success ? "成功" : "失败";
+    const output = [payload.stdout, changedFiles].filter(Boolean).join("\n");
+    return {
+      role: "tool",
+      phase: "patch_apply",
+      completed: Boolean(payload.success),
+      importance: 3,
+      text: `补丁应用${status}${output ? `：\n${output}` : ""}`
+    };
+  }
+  if (item.type === "event_msg") {
+    return summarizeGenericEvent(payload.type || "event_msg", payload);
+  }
+  if (item.type === "response_item" && payload.type === "custom_tool_call") {
+    return {
+      role: "tool",
+      phase: payload.name || "custom_tool_call",
+      completed: payload.status === "completed",
+      importance: payload.name === "apply_patch" ? 2 : 1,
+      text: `工具调用：${payload.name || "custom_tool"} ${summarizeValue(payload.input, 420)}`
+    };
+  }
+  if (item.type === "response_item" && payload.type === "function_call") {
+    return {
+      role: "tool",
+      phase: payload.name || "function_call",
+      completed: payload.status === "completed",
+      importance: 1,
+      text: `函数调用：${payload.name || "function"} ${summarizeValue(payload.arguments, 420)}`
+    };
+  }
   if (item.type === "response_item" && payload.type === "message") {
     const text = Array.isArray(payload.content)
       ? payload.content.map((part) => part.text || part.input_text || part.output_text || "").join("\n")
       : "";
-    return { role: payload.role || "assistant", text };
+    return { role: payload.role || "assistant", phase: payload.phase, completed: payload.phase === "final_answer", text };
   }
   if (item.type === "response_item" && payload.type === "function_call_output") {
     return { role: "tool", text: payload.output };
   }
-  return null;
+  if (item.type === "response_item" && payload.type === "web_search_call") {
+    return {
+      role: "event",
+      phase: "web_search_call",
+      completed: payload.status === "completed",
+      importance: 1,
+      text: `网页搜索调用：${payload.action?.query || ""}`
+    };
+  }
+  if (item.type === "response_item") {
+    return summarizeGenericEvent(payload.type || "response_item", payload);
+  }
+  return summarizeGenericEvent(item.type || "event", payload);
+}
+
+function summarizeGenericEvent(phase, payload = {}) {
+  const text = [
+    payload.message,
+    payload.last_agent_message,
+    payload.summary,
+    payload.name,
+    payload.status,
+    payload.error,
+    payload.command ? summarizeValue(payload.command, 220) : "",
+    payload.output ? summarizeValue(payload.output, 220) : ""
+  ].filter(Boolean).join(" ");
+  return {
+    role: "event",
+    phase,
+    completed: /complete|completed|end|success/i.test(String(phase)) || payload.status === "completed" || payload.success === true,
+    importance: isLowImportancePhase(phase) ? -1 : 0,
+    text: `${phase}：${text || summarizeValue(payload, 360)}`
+  };
+}
+
+function isLowImportancePhase(phase) {
+  return /token|usage|quota|rate|heartbeat|stream/i.test(String(phase || ""));
+}
+
+function summarizeValue(value, maxLength = 360) {
+  const raw = typeof value === "string" ? value : JSON.stringify(value ?? "");
+  return String(raw)
+    .replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=_-]+/gi, "[image omitted]")
+    .replace(/[A-Za-z0-9+/=_-]{1000,}/g, "[long encoded data omitted]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
 }
 
 function tokenize(text) {
@@ -286,8 +445,8 @@ function adjustedSnippetScore(text, tokens, exactHit) {
   const normalized = String(text || "");
   let score = scoreText(normalized, tokens) + (exactHit ? 1 : 0.3);
   const tokenText = tokens.join(" ").toLowerCase();
-  if (/(client|webui|bundle|resource|resources|adapter|bridge|proxy|message|host|通讯|客户端|启动器|资源|同步|桥接|代理|消息|宿主)/i.test(tokenText)
-    && /(client|webui|bundle|Resources|Contents\/Resources|client\.html|client\.js|client\.css|adapter|bridge|proxy|message|host|通讯中枢|客户端|启动器|资源|同步|桥接|代理|消息|宿主|localhost:\d+)/i.test(normalized)) {
+  if (/(client|webui|bundle|resource|resources|通讯|客户端|启动器|资源|同步)/i.test(tokenText)
+    && /(client|webui|bundle|Resources|Contents\/Resources|client\.html|client\.js|client\.css|通讯中枢|客户端|启动器|资源|同步|localhost:3789)/i.test(normalized)) {
     score += 5;
   }
   if (/(完成了|整理好了|我已经做了|做了这些|新增的是完整|现在两条线都收住|这个阶段完成了|验证也跑过)/.test(normalized)) {
